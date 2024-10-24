@@ -28,6 +28,34 @@
   height: 24px;
 }
 
+/* Inline capture button */
+.capture-button-inline {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 20px;
+  background: #2196f3;
+  color: white;
+  border: none;
+  border-radius: 5px;
+  cursor: pointer;
+  font-size: 14px;
+  font-weight: 500;
+  transition: all 0.2s ease;
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.capture-button-inline:hover {
+  background: #1976d2;
+  transform: translateY(-2px);
+  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+}
+
+.capture-button-inline svg {
+  width: 20px;
+  height: 20px;
+}
+
 /* Download popup */
 #download-popup {
   position: fixed;
@@ -75,9 +103,6 @@
   font-size: 15px;
   font-weight: 500;
   transition: all 0.2s ease;
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .download-btn:hover {
@@ -119,47 +144,17 @@
   animation: spin 1s linear infinite;
 }
 
-/* Inline capture button */
-.capture-button-inline {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 20px;
-  background: #2196f3;
-  color: white;
-  border: none;
-  border-radius: 5px;
-  cursor: pointer;
-  font-size: 14px;
-  font-weight: 500;
-  transition: all 0.2s ease;
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-.capture-button-inline:hover {
-  background: #1976d2;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
-}
-
-.capture-button-inline svg {
-  width: 20px;
-  height: 20px;
-}
-
 /* Loading states */
 .capture-button-inline.capturing,
 #capture-button.capturing {
   opacity: 0.7;
   cursor: not-allowed;
   pointer-events: none;
-  background: #9e9e9e;
 }
 
 .capture-button-inline:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background: #9e9e9e;
 }
 
 /* Animations */
@@ -205,6 +200,5 @@
 
   .download-btn {
     width: 100%;
-    justify-content: center;
   }
 }

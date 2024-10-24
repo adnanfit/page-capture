@@ -2,20 +2,43 @@ jQuery(document).ready(function ($) {
   let capturing = false;
   let capturedCanvas = null;
 
-  // Wait for jsPDF to be available
-  if (typeof window.jspdf === "undefined") {
-    window.jspdf = window.jsPDF;
+  // Helper function to get header and footer elements
+  function getHeaderFooter() {
+    const header = $(
+      'header, .header, [role="banner"], .site-header, #header, .navbar, .nav-fixed, #masthead'
+    ).first();
+    const footer = $(
+      'footer, .footer, [role="contentinfo"], .site-footer, #footer'
+    ).first();
+    return { header, footer };
   }
 
-  async function smoothScroll(to) {
-    window.scrollTo({
-      top: to,
-      behavior: "auto",
+  // Helper function to capture specific element
+  async function captureElement(element) {
+    if (!element || !element.length) return null;
+
+    const canvas = await html2canvas(element[0], {
+      scale: 2,
+      useCORS: true,
+      allowTaint: true,
+      logging: false,
+      backgroundColor: "#FFFFFF",
     });
-    return new Promise((resolve) => setTimeout(resolve, 100));
+
+    return {
+      canvas: canvas,
+      height: element.outerHeight(),
+    };
   }
 
   async function captureSection(scrollTop) {
+    const { header, footer } = getHeaderFooter();
+
+    // Temporarily hide header and footer
+    header.css("opacity", "0");
+    footer.css("opacity", "0");
+
+    // Capture main content
     const canvas = await html2canvas(document.documentElement, {
       scrollY: -scrollTop,
       windowWidth: document.documentElement.clientWidth,
@@ -26,26 +49,20 @@ jQuery(document).ready(function ($) {
       allowTaint: true,
       logging: false,
       backgroundColor: "#FFFFFF",
-      scale: 2, //
-      imageTimeout: 0,
+      scale: 2,
       onclone: function (clonedDoc) {
         $(clonedDoc)
           .find(
             "#capture-button, #download-popup, #processing-overlay, .capture-button-inline"
           )
           .remove();
-
-        // Force background colors on elements that might be transparent
-        $(clonedDoc)
-          .find("*")
-          .each(function () {
-            const bgcolor = $(this).css("backgroundColor");
-            if (bgcolor === "rgba(0, 0, 0, 0)" || bgcolor === "transparent") {
-              $(this).css("backgroundColor", "#FFFFFF");
-            }
-          });
       },
     });
+
+    // Restore header and footer
+    header.css("opacity", "");
+    footer.css("opacity", "");
+
     return canvas;
   }
 
@@ -58,8 +75,11 @@ jQuery(document).ready(function ($) {
     $("#capture-button, .capture-button-inline").prop("disabled", true);
 
     try {
-      const originalScrollPos = window.pageYOffset;
+      const { header, footer } = getHeaderFooter();
+      const headerCapture = await captureElement(header);
+      const footerCapture = await captureElement(footer);
 
+      const originalScrollPos = window.pageYOffset;
       const totalHeight = Math.max(
         document.body.scrollHeight,
         document.documentElement.scrollHeight,
@@ -70,34 +90,33 @@ jQuery(document).ready(function ($) {
       const finalCanvas = document.createElement("canvas");
       const ctx = finalCanvas.getContext("2d");
 
-      finalCanvas.width =
-        document.documentElement.clientWidth * window.devicePixelRatio;
-      finalCanvas.height = totalHeight * window.devicePixelRatio;
+      finalCanvas.width = document.documentElement.clientWidth * 2; // Scale factor of 2
+      finalCanvas.height = totalHeight * 2; // Scale factor of 2
 
-      await smoothScroll(0);
+      window.scrollTo(0, 0);
+      await new Promise((resolve) => setTimeout(resolve, 100));
 
       const viewportHeight = window.innerHeight;
       let currentScroll = 0;
 
       while (currentScroll < totalHeight) {
         const sectionCanvas = await captureSection(currentScroll);
-
         ctx.drawImage(
           sectionCanvas,
           0,
-          currentScroll * window.devicePixelRatio,
+          currentScroll * 2, // Scale factor of 2
           sectionCanvas.width,
           sectionCanvas.height
         );
 
         currentScroll += viewportHeight;
         if (currentScroll < totalHeight) {
-          await smoothScroll(currentScroll);
+          window.scrollTo(0, currentScroll);
+          await new Promise((resolve) => setTimeout(resolve, 100));
         }
       }
 
       window.scrollTo(0, originalScrollPos);
-
       capturedCanvas = finalCanvas;
       showDownloadPopup();
     } catch (error) {
@@ -119,23 +138,31 @@ jQuery(document).ready(function ($) {
     showProcessingOverlay();
 
     try {
+      const { header, footer } = getHeaderFooter();
+      const headerCapture = await captureElement(header);
+      const footerCapture = await captureElement(footer);
+
       const { jsPDF } = window.jspdf;
 
       // A4 dimensions in mm
       const a4Width = 210;
       const a4Height = 297;
 
-      // Get original dimensions
-      const imgWidth = capturedCanvas.width;
-      const imgHeight = capturedCanvas.height;
+      // Set margins
+      const margins = {
+        top: headerCapture ? 40 : 10,
+        bottom: footerCapture ? 40 : 10,
+        left: 10,
+        right: 10,
+      };
 
-      // Calculate best scale to fit width while maintaining aspect ratio
-      const scale = a4Width / imgWidth;
-      const scaledHeight = imgHeight * scale;
+      // Calculate content area
+      const contentWidth = a4Width - margins.left - margins.right;
+      const contentHeight = a4Height - margins.top - margins.bottom;
 
-      // Calculate optimal page height (slightly less than A4 height to avoid tiny splits)
-      const pageHeight = a4Height - 20;
-      const pageWidth = a4Width - 20;
+      // Calculate scale for content
+      const scale = contentWidth / (capturedCanvas.width / 2); // Divide by 2 due to scale factor
+      const scaledHeight = (capturedCanvas.height / 2) * scale; // Divide by 2 due to scale factor
 
       // Create PDF
       const pdf = new jsPDF({
@@ -144,64 +171,85 @@ jQuery(document).ready(function ($) {
         format: "a4",
       });
 
-      // Calculate number of pages needed
-      const totalPages = Math.ceil(scaledHeight / pageHeight);
+      // Calculate pages needed
+      const totalPages = Math.ceil(scaledHeight / contentHeight);
 
-      // For each page
+      // Process each page
       for (let page = 0; page < totalPages; page++) {
         if (page > 0) {
           pdf.addPage();
         }
 
-        // Create temporary canvas for this section
+        // Add header if exists
+        if (headerCapture) {
+          const headerImage = headerCapture.canvas.toDataURL("image/jpeg", 1.0);
+          pdf.addImage(
+            headerImage,
+            "JPEG",
+            margins.left,
+            5,
+            contentWidth,
+            30,
+            "",
+            "FAST"
+          );
+        }
+
+        // Add content section
         const tempCanvas = document.createElement("canvas");
         const tempCtx = tempCanvas.getContext("2d");
 
-        // Calculate source and destination dimensions
-        const sourceY = (page * pageHeight) / scale;
-        const sourceHeight = Math.min(pageHeight / scale, imgHeight - sourceY);
+        const sourceY = ((page * contentHeight) / scale) * 2; // Multiply by 2 due to scale factor
+        const sourceHeight = Math.min(
+          (contentHeight / scale) * 2,
+          capturedCanvas.height - sourceY
+        );
 
-        // Set temp canvas size
-        tempCanvas.width = imgWidth;
+        tempCanvas.width = capturedCanvas.width;
         tempCanvas.height = sourceHeight;
 
-        // Draw portion of original canvas to temp canvas
         tempCtx.drawImage(
           capturedCanvas,
           0,
           sourceY,
-          imgWidth,
+          capturedCanvas.width,
           sourceHeight,
           0,
           0,
-          imgWidth,
+          capturedCanvas.width,
           sourceHeight
         );
 
-        // Convert to image data
-        const imgData = tempCanvas.toDataURL("image/jpeg", 1.0);
-
-        // Calculate position to center content
-        const xOffset = 10;
-        const yOffset = 10;
-
-        // Add image to PDF
+        // Add content to PDF
         pdf.addImage(
-          imgData,
+          tempCanvas.toDataURL("image/jpeg", 1.0),
           "JPEG",
-          xOffset,
-          yOffset,
-          pageWidth,
-          sourceHeight * scale,
+          margins.left,
+          margins.top,
+          contentWidth,
+          (sourceHeight / 2) * scale, // Divide by 2 due to scale factor
           "",
           "FAST"
         );
 
-        // Clean up
+        // Add footer if exists
+        if (footerCapture) {
+          const footerImage = footerCapture.canvas.toDataURL("image/jpeg", 1.0);
+          pdf.addImage(
+            footerImage,
+            "JPEG",
+            margins.left,
+            a4Height - 35,
+            contentWidth,
+            30,
+            "",
+            "FAST"
+          );
+        }
+
         tempCanvas.remove();
       }
 
-      // Save the PDF
       pdf.save(document.title + "-capture.pdf");
       hideProcessingOverlay();
     } catch (error) {
@@ -277,6 +325,7 @@ jQuery(document).ready(function ($) {
     });
   }
 
+  // Bind click handlers
   $("#capture-button, .capture-button-inline").click(function () {
     startCapture(this);
   });
