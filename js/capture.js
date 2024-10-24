@@ -63,60 +63,43 @@ jQuery(document).ready(function ($) {
     try {
       const originalScrollPos = window.pageYOffset;
 
-      // Get total height including any overflow
       const totalHeight = Math.max(
         document.body.scrollHeight,
         document.documentElement.scrollHeight,
         document.body.offsetHeight,
-        document.documentElement.offsetHeight,
-        document.documentElement.getBoundingClientRect().height
+        document.documentElement.offsetHeight
       );
 
       const finalCanvas = document.createElement("canvas");
       const ctx = finalCanvas.getContext("2d");
       finalCanvas.width = document.documentElement.clientWidth * 2;
-      finalCanvas.height = totalHeight * 2;
+      const finalHeight = totalHeight * 2;
+      finalCanvas.height = finalHeight;
 
       const viewportHeight = window.innerHeight;
-      const totalViewports = Math.ceil(totalHeight / (viewportHeight * 0.95)); // Overlap by 5% to ensure no gaps
+      const totalViewports = Math.ceil(totalHeight / viewportHeight);
       let currentViewport = 0;
 
       await smoothScroll(0);
-      await delay(1000); // Longer initial delay to ensure page is ready
+      await delay(500);
 
       while (currentViewport < totalViewports) {
-        const currentScrollPosition = currentViewport * (viewportHeight * 0.95);
-        await smoothScroll(currentScrollPosition);
-        await delay(500); // Wait for scroll to settle
-
         const viewportCanvas = await captureViewport();
-
-        // Calculate the actual position to draw, accounting for overlap
-        const drawPosition = currentViewport * viewportHeight * 1.9; // Adjusted for scale factor and overlap
 
         ctx.drawImage(
           viewportCanvas,
           0,
-          drawPosition,
+          currentViewport * viewportHeight * 2,
           viewportCanvas.width,
           viewportCanvas.height
         );
 
         currentViewport++;
+        if (currentViewport < totalViewports) {
+          await smoothScroll(currentViewport * viewportHeight);
+          await delay(300);
+        }
       }
-
-      // Capture one more time at the very bottom to ensure we get everything
-      await smoothScroll(totalHeight - viewportHeight);
-      await delay(500);
-
-      const finalViewportCanvas = await captureViewport();
-      ctx.drawImage(
-        finalViewportCanvas,
-        0,
-        (totalViewports - 1) * viewportHeight * 1.9,
-        finalViewportCanvas.width,
-        finalViewportCanvas.height
-      );
 
       await smoothScroll(originalScrollPos);
       capturedCanvas = finalCanvas;
@@ -128,48 +111,6 @@ jQuery(document).ready(function ($) {
       $clickedButton.removeClass("capturing");
       $("#capture-button, .capture-button-inline").prop("disabled", false);
       capturing = false;
-    }
-  }
-
-  // Update captureViewport function for better capture
-  async function captureViewport() {
-    try {
-      const canvas = await html2canvas(document.documentElement, {
-        useCORS: true,
-        allowTaint: true,
-        scrollY: -window.pageYOffset,
-        windowWidth: document.documentElement.clientWidth,
-        windowHeight: window.innerHeight,
-        width: document.documentElement.clientWidth,
-        height: window.innerHeight,
-        scale: 2,
-        logging: true,
-        removeContainer: true,
-        backgroundColor: null,
-        foreignObjectRendering: true,
-        imageTimeout: 0,
-        onclone: function (clonedDoc) {
-          $(clonedDoc)
-            .find(
-              "#capture-button, #download-popup, #processing-overlay, .capture-button-inline"
-            )
-            .remove();
-
-          // Ensure fixed elements are properly handled
-          $(clonedDoc)
-            .find("*")
-            .each(function () {
-              const position = getComputedStyle(this).position;
-              if (position === "fixed") {
-                this.style.position = "absolute";
-              }
-            });
-        },
-      });
-      return canvas;
-    } catch (error) {
-      console.error("Viewport capture error:", error);
-      throw error;
     }
   }
 
