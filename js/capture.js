@@ -2,43 +2,15 @@ jQuery(document).ready(function ($) {
   let capturing = false;
   let capturedCanvas = null;
 
-  // Helper function to get header and footer elements
-  function getHeaderFooter() {
-    const header = $(
-      'header, .header, [role="banner"], .site-header, #header, .navbar, .nav-fixed, #masthead'
-    ).first();
-    const footer = $(
-      'footer, .footer, [role="contentinfo"], .site-footer, #footer'
-    ).first();
-    return { header, footer };
-  }
-
-  // Helper function to capture specific element
-  async function captureElement(element) {
-    if (!element || !element.length) return null;
-
-    const canvas = await html2canvas(element[0], {
-      scale: 2,
-      useCORS: true,
-      allowTaint: true,
-      logging: false,
-      backgroundColor: "#FFFFFF",
+  async function smoothScroll(to) {
+    window.scrollTo({
+      top: to,
+      behavior: "auto",
     });
-
-    return {
-      canvas: canvas,
-      height: element.outerHeight(),
-    };
+    return new Promise((resolve) => setTimeout(resolve, 100));
   }
 
   async function captureSection(scrollTop) {
-    const { header, footer } = getHeaderFooter();
-
-    // Temporarily hide header and footer
-    header.css("opacity", "0");
-    footer.css("opacity", "0");
-
-    // Capture main content
     const canvas = await html2canvas(document.documentElement, {
       scrollY: -scrollTop,
       windowWidth: document.documentElement.clientWidth,
@@ -48,20 +20,41 @@ jQuery(document).ready(function ($) {
       useCORS: true,
       allowTaint: true,
       logging: false,
-      backgroundColor: "#FFFFFF",
+      removeContainer: true,
+      backgroundColor: null,
       scale: 2,
+      foreignObjectRendering: true,
+      imageSmoothingEnabled: true,
+      imageSmoothingQuality: "high",
       onclone: function (clonedDoc) {
+        // Remove plugin elements
         $(clonedDoc)
           .find(
             "#capture-button, #download-popup, #processing-overlay, .capture-button-inline"
           )
           .remove();
+
+        // Copy original styles
+        const styles = document.getElementsByTagName("style");
+        const links = document.getElementsByTagName("link");
+
+        Array.from(styles).forEach((style) => {
+          clonedDoc.head.appendChild(style.cloneNode(true));
+        });
+
+        Array.from(links).forEach((link) => {
+          if (link.rel === "stylesheet") {
+            clonedDoc.head.appendChild(link.cloneNode(true));
+          }
+        });
+
+        // Preserve computed styles
+        Array.from(clonedDoc.getElementsByTagName("*")).forEach((element) => {
+          const computedStyle = window.getComputedStyle(element);
+          element.style.cssText = computedStyle.cssText;
+        });
       },
     });
-
-    // Restore header and footer
-    header.css("opacity", "");
-    footer.css("opacity", "");
 
     return canvas;
   }
@@ -75,11 +68,9 @@ jQuery(document).ready(function ($) {
     $("#capture-button, .capture-button-inline").prop("disabled", true);
 
     try {
-      const { header, footer } = getHeaderFooter();
-      const headerCapture = await captureElement(header);
-      const footerCapture = await captureElement(footer);
-
       const originalScrollPos = window.pageYOffset;
+      const originalBackground = $("body").css("backgroundColor");
+
       const totalHeight = Math.max(
         document.body.scrollHeight,
         document.documentElement.scrollHeight,
@@ -90,32 +81,39 @@ jQuery(document).ready(function ($) {
       const finalCanvas = document.createElement("canvas");
       const ctx = finalCanvas.getContext("2d");
 
-      finalCanvas.width = document.documentElement.clientWidth * 2; // Scale factor of 2
-      finalCanvas.height = totalHeight * 2; // Scale factor of 2
+      finalCanvas.width = document.documentElement.clientWidth * 2;
+      finalCanvas.height = totalHeight * 2;
 
-      window.scrollTo(0, 0);
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      // Clear canvas while preserving transparency
+      ctx.clearRect(0, 0, finalCanvas.width, finalCanvas.height);
+
+      // Scroll to top first
+      await smoothScroll(0);
 
       const viewportHeight = window.innerHeight;
       let currentScroll = 0;
 
       while (currentScroll < totalHeight) {
         const sectionCanvas = await captureSection(currentScroll);
+
+        // Draw section with high quality settings
+        ctx.imageSmoothingEnabled = true;
+        ctx.imageSmoothingQuality = "high";
         ctx.drawImage(
           sectionCanvas,
           0,
-          currentScroll * 2, // Scale factor of 2
+          currentScroll * 2,
           sectionCanvas.width,
           sectionCanvas.height
         );
 
         currentScroll += viewportHeight;
         if (currentScroll < totalHeight) {
-          window.scrollTo(0, currentScroll);
-          await new Promise((resolve) => setTimeout(resolve, 100));
+          await smoothScroll(currentScroll);
         }
       }
 
+      // Restore scroll position
       window.scrollTo(0, originalScrollPos);
       capturedCanvas = finalCanvas;
       showDownloadPopup();
@@ -138,10 +136,6 @@ jQuery(document).ready(function ($) {
     showProcessingOverlay();
 
     try {
-      const { header, footer } = getHeaderFooter();
-      const headerCapture = await captureElement(header);
-      const footerCapture = await captureElement(footer);
-
       const { jsPDF } = window.jspdf;
 
       // A4 dimensions in mm
@@ -150,8 +144,8 @@ jQuery(document).ready(function ($) {
 
       // Set margins
       const margins = {
-        top: headerCapture ? 40 : 10,
-        bottom: footerCapture ? 40 : 10,
+        top: 10,
+        bottom: 10,
         left: 10,
         right: 10,
       };
@@ -161,14 +155,17 @@ jQuery(document).ready(function ($) {
       const contentHeight = a4Height - margins.top - margins.bottom;
 
       // Calculate scale for content
-      const scale = contentWidth / (capturedCanvas.width / 2); // Divide by 2 due to scale factor
-      const scaledHeight = (capturedCanvas.height / 2) * scale; // Divide by 2 due to scale factor
+      const originalWidth = capturedCanvas.width / 2;
+      const originalHeight = capturedCanvas.height / 2;
+      const scale = contentWidth / originalWidth;
+      const scaledHeight = originalHeight * scale;
 
-      // Create PDF
+      // Create PDF with white background
       const pdf = new jsPDF({
         orientation: "portrait",
         unit: "mm",
         format: "a4",
+        compress: true,
       });
 
       // Calculate pages needed
@@ -180,26 +177,11 @@ jQuery(document).ready(function ($) {
           pdf.addPage();
         }
 
-        // Add header if exists
-        if (headerCapture) {
-          const headerImage = headerCapture.canvas.toDataURL("image/jpeg", 1.0);
-          pdf.addImage(
-            headerImage,
-            "JPEG",
-            margins.left,
-            5,
-            contentWidth,
-            30,
-            "",
-            "FAST"
-          );
-        }
-
-        // Add content section
+        // Create temporary canvas for content section
         const tempCanvas = document.createElement("canvas");
         const tempCtx = tempCanvas.getContext("2d");
 
-        const sourceY = ((page * contentHeight) / scale) * 2; // Multiply by 2 due to scale factor
+        const sourceY = ((page * contentHeight) / scale) * 2;
         const sourceHeight = Math.min(
           (contentHeight / scale) * 2,
           capturedCanvas.height - sourceY
@@ -207,6 +189,10 @@ jQuery(document).ready(function ($) {
 
         tempCanvas.width = capturedCanvas.width;
         tempCanvas.height = sourceHeight;
+
+        // Use high quality settings
+        tempCtx.imageSmoothingEnabled = true;
+        tempCtx.imageSmoothingQuality = "high";
 
         tempCtx.drawImage(
           capturedCanvas,
@@ -216,36 +202,21 @@ jQuery(document).ready(function ($) {
           sourceHeight,
           0,
           0,
-          capturedCanvas.width,
+          tempCanvas.width,
           sourceHeight
         );
 
-        // Add content to PDF
+        // Add content to PDF with high quality settings
         pdf.addImage(
-          tempCanvas.toDataURL("image/jpeg", 1.0),
-          "JPEG",
+          tempCanvas.toDataURL("image/png", 1.0),
+          "PNG",
           margins.left,
           margins.top,
           contentWidth,
-          (sourceHeight / 2) * scale, // Divide by 2 due to scale factor
+          (sourceHeight / 2) * scale,
           "",
           "FAST"
         );
-
-        // Add footer if exists
-        if (footerCapture) {
-          const footerImage = footerCapture.canvas.toDataURL("image/jpeg", 1.0);
-          pdf.addImage(
-            footerImage,
-            "JPEG",
-            margins.left,
-            a4Height - 35,
-            contentWidth,
-            30,
-            "",
-            "FAST"
-          );
-        }
 
         tempCanvas.remove();
       }
@@ -325,7 +296,7 @@ jQuery(document).ready(function ($) {
     });
   }
 
-  // Bind click handlers
+  // Initialize capture buttons
   $("#capture-button, .capture-button-inline").click(function () {
     startCapture(this);
   });
