@@ -2,61 +2,56 @@ jQuery(document).ready(function ($) {
   let capturing = false;
   let capturedCanvas = null;
 
-  async function smoothScroll(to) {
-    window.scrollTo({
-      top: to,
-      behavior: "auto",
-    });
-    return new Promise((resolve) => setTimeout(resolve, 100));
+  // Wait for jsPDF to be available
+  if (typeof window.jspdf === "undefined") {
+    window.jspdf = window.jsPDF;
   }
 
-  async function captureSection(scrollTop) {
-    const canvas = await html2canvas(document.documentElement, {
-      scrollY: -scrollTop,
-      windowWidth: document.documentElement.clientWidth,
-      windowHeight: window.innerHeight,
-      width: document.documentElement.clientWidth,
-      height: window.innerHeight,
-      useCORS: true,
-      allowTaint: true,
-      logging: false,
-      removeContainer: true,
-      backgroundColor: null,
-      scale: 2,
-      foreignObjectRendering: true,
-      imageSmoothingEnabled: true,
-      imageSmoothingQuality: "high",
-      onclone: function (clonedDoc) {
-        // Remove plugin elements
-        $(clonedDoc)
-          .find(
-            "#capture-button, #download-popup, #processing-overlay, .capture-button-inline"
-          )
-          .remove();
+  // Create a promise-based delay function
+  const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
-        // Copy original styles
-        const styles = document.getElementsByTagName("style");
-        const links = document.getElementsByTagName("link");
-
-        Array.from(styles).forEach((style) => {
-          clonedDoc.head.appendChild(style.cloneNode(true));
-        });
-
-        Array.from(links).forEach((link) => {
-          if (link.rel === "stylesheet") {
-            clonedDoc.head.appendChild(link.cloneNode(true));
-          }
-        });
-
-        // Preserve computed styles
-        Array.from(clonedDoc.getElementsByTagName("*")).forEach((element) => {
-          const computedStyle = window.getComputedStyle(element);
-          element.style.cssText = computedStyle.cssText;
-        });
-      },
+  // Smooth scroll function
+  async function smoothScroll(to) {
+    return new Promise(async (resolve) => {
+      window.scrollTo({
+        top: to,
+        behavior: "smooth",
+      });
+      // Wait for scroll to complete
+      await delay(500);
+      resolve();
     });
+  }
 
-    return canvas;
+  // Function to capture a single viewport
+  async function captureViewport() {
+    try {
+      const canvas = await html2canvas(document.documentElement, {
+        useCORS: true,
+        allowTaint: true,
+        scrollY: -window.pageYOffset,
+        windowWidth: document.documentElement.clientWidth,
+        windowHeight: window.innerHeight,
+        width: document.documentElement.clientWidth,
+        height: window.innerHeight,
+        scale: 2,
+        logging: true,
+        removeContainer: true,
+        backgroundColor: null,
+        onclone: function (clonedDoc) {
+          // Remove capture elements from clone
+          $(clonedDoc)
+            .find(
+              "#capture-button, #download-popup, #processing-overlay, .capture-button-inline"
+            )
+            .remove();
+        },
+      });
+      return canvas;
+    } catch (error) {
+      console.error("Viewport capture error:", error);
+      throw error;
+    }
   }
 
   async function startCapture(clickedElement) {
@@ -67,10 +62,21 @@ jQuery(document).ready(function ($) {
     $clickedButton.addClass("capturing");
     $("#capture-button, .capture-button-inline").prop("disabled", true);
 
-    try {
-      const originalScrollPos = window.pageYOffset;
-      const originalBackground = $("body").css("backgroundColor");
+    // Show capturing progress
+    const $progress = $(`
+        <div id="capture-progress">
+          <div class="progress-content">
+            <div class="progress-bar"></div>
+            <div class="progress-text">Capturing page...</div>
+          </div>
+        </div>
+      `).appendTo("body");
 
+    try {
+      // Store original scroll position
+      const originalScrollPos = window.pageYOffset;
+
+      // Get total page height
       const totalHeight = Math.max(
         document.body.scrollHeight,
         document.documentElement.scrollHeight,
@@ -78,48 +84,62 @@ jQuery(document).ready(function ($) {
         document.documentElement.offsetHeight
       );
 
+      // Create final canvas
       const finalCanvas = document.createElement("canvas");
       const ctx = finalCanvas.getContext("2d");
+      finalCanvas.width = document.documentElement.clientWidth * 2; // Scale factor of 2
+      const finalHeight = totalHeight * 2; // Scale factor of 2
+      finalCanvas.height = finalHeight;
 
-      finalCanvas.width = document.documentElement.clientWidth * 2;
-      finalCanvas.height = totalHeight * 2;
-
-      // Clear canvas while preserving transparency
-      ctx.clearRect(0, 0, finalCanvas.width, finalCanvas.height);
-
-      // Scroll to top first
-      await smoothScroll(0);
-
+      // Calculate number of viewports needed
       const viewportHeight = window.innerHeight;
-      let currentScroll = 0;
+      const totalViewports = Math.ceil(totalHeight / viewportHeight);
+      let currentViewport = 0;
 
-      while (currentScroll < totalHeight) {
-        const sectionCanvas = await captureSection(currentScroll);
+      // Start from top
+      await smoothScroll(0);
+      await delay(500); // Wait for page to settle
 
-        // Draw section with high quality settings
-        ctx.imageSmoothingEnabled = true;
-        ctx.imageSmoothingQuality = "high";
+      // Capture each viewport
+      while (currentViewport < totalViewports) {
+        // Update progress
+        const progress = (currentViewport / totalViewports) * 100;
+        $(".progress-bar").css("width", progress + "%");
+        $(".progress-text").text(`Capturing page... ${Math.round(progress)}%`);
+
+        // Capture current viewport
+        const viewportCanvas = await captureViewport();
+
+        // Draw to final canvas
         ctx.drawImage(
-          sectionCanvas,
+          viewportCanvas,
           0,
-          currentScroll * 2,
-          sectionCanvas.width,
-          sectionCanvas.height
+          currentViewport * viewportHeight * 2, // Scale factor of 2
+          viewportCanvas.width,
+          viewportCanvas.height
         );
 
-        currentScroll += viewportHeight;
-        if (currentScroll < totalHeight) {
-          await smoothScroll(currentScroll);
+        // Scroll to next viewport
+        currentViewport++;
+        if (currentViewport < totalViewports) {
+          await smoothScroll(currentViewport * viewportHeight);
+          await delay(300); // Wait for content to settle
         }
       }
 
-      // Restore scroll position
-      window.scrollTo(0, originalScrollPos);
+      // Restore original scroll position
+      await smoothScroll(originalScrollPos);
+
+      // Store captured canvas
       capturedCanvas = finalCanvas;
+
+      // Remove progress indicator and show download popup
+      $progress.remove();
       showDownloadPopup();
     } catch (error) {
       console.error("Capture failed:", error);
       alert("Failed to capture page. Please try again.");
+      $progress.remove();
     } finally {
       $clickedButton.removeClass("capturing");
       $("#capture-button, .capture-button-inline").prop("disabled", false);
@@ -142,83 +162,63 @@ jQuery(document).ready(function ($) {
       const a4Width = 210;
       const a4Height = 297;
 
-      // Set margins
-      const margins = {
-        top: 10,
-        bottom: 10,
-        left: 10,
-        right: 10,
-      };
+      // Calculate scaling
+      const imgWidth = capturedCanvas.width / 2; // Account for scale factor
+      const imgHeight = capturedCanvas.height / 2;
+      const ratio = imgWidth / imgHeight;
 
-      // Calculate content area
-      const contentWidth = a4Width - margins.left - margins.right;
-      const contentHeight = a4Height - margins.top - margins.bottom;
+      let width = a4Width - 20; // 10mm margins on each side
+      let height = width / ratio;
 
-      // Calculate scale for content
-      const originalWidth = capturedCanvas.width / 2;
-      const originalHeight = capturedCanvas.height / 2;
-      const scale = contentWidth / originalWidth;
-      const scaledHeight = originalHeight * scale;
-
-      // Create PDF with white background
+      // Create PDF
       const pdf = new jsPDF({
-        orientation: "portrait",
+        orientation: height > a4Height ? "p" : "l",
         unit: "mm",
         format: "a4",
         compress: true,
       });
 
-      // Calculate pages needed
-      const totalPages = Math.ceil(scaledHeight / contentHeight);
-
-      // Process each page
-      for (let page = 0; page < totalPages; page++) {
+      // Split into pages if needed
+      const pages = Math.ceil(height / (a4Height - 20)); // 10mm margins top and bottom
+      for (let page = 0; page < pages; page++) {
         if (page > 0) {
           pdf.addPage();
         }
 
-        // Create temporary canvas for content section
-        const tempCanvas = document.createElement("canvas");
-        const tempCtx = tempCanvas.getContext("2d");
-
-        const sourceY = ((page * contentHeight) / scale) * 2;
-        const sourceHeight = Math.min(
-          (contentHeight / scale) * 2,
-          capturedCanvas.height - sourceY
+        // Calculate slice height
+        const sliceHeight = Math.min(
+          imgHeight - page * (imgHeight / pages),
+          imgHeight / pages
         );
+        const canvas = document.createElement("canvas");
+        const ctx = canvas.getContext("2d");
 
-        tempCanvas.width = capturedCanvas.width;
-        tempCanvas.height = sourceHeight;
+        canvas.width = imgWidth;
+        canvas.height = sliceHeight;
 
-        // Use high quality settings
-        tempCtx.imageSmoothingEnabled = true;
-        tempCtx.imageSmoothingQuality = "high";
-
-        tempCtx.drawImage(
+        // Draw slice of original image
+        ctx.drawImage(
           capturedCanvas,
           0,
-          sourceY,
-          capturedCanvas.width,
-          sourceHeight,
+          page * (imgHeight / pages) * 2, // Source coordinates (account for scale)
+          imgWidth * 2,
+          sliceHeight * 2, // Source dimensions (account for scale)
           0,
-          0,
-          tempCanvas.width,
-          sourceHeight
+          0, // Destination coordinates
+          imgWidth,
+          sliceHeight // Destination dimensions
         );
 
-        // Add content to PDF with high quality settings
+        // Add to PDF
+        const imgData = canvas.toDataURL("image/jpeg", 1.0);
         pdf.addImage(
-          tempCanvas.toDataURL("image/png", 1.0),
-          "PNG",
-          margins.left,
-          margins.top,
-          contentWidth,
-          (sourceHeight / 2) * scale,
-          "",
-          "FAST"
+          imgData,
+          "JPEG",
+          10,
+          10,
+          width,
+          (sliceHeight * width) / imgWidth
         );
-
-        tempCanvas.remove();
       }
 
       pdf.save(document.title + "-capture.pdf");
