@@ -63,44 +63,75 @@ jQuery(document).ready(function ($) {
     try {
       const originalScrollPos = window.pageYOffset;
 
+      // Get complete height of the document
       const totalHeight = Math.max(
         document.body.scrollHeight,
         document.documentElement.scrollHeight,
         document.body.offsetHeight,
-        document.documentElement.offsetHeight
+        document.documentElement.offsetHeight,
+        document.documentElement.clientHeight
       );
 
+      // Create canvas with proper dimensions
       const finalCanvas = document.createElement("canvas");
       const ctx = finalCanvas.getContext("2d");
       finalCanvas.width = document.documentElement.clientWidth * 2;
-      const finalHeight = totalHeight * 2;
-      finalCanvas.height = finalHeight;
+      finalCanvas.height = totalHeight * 2;
 
       const viewportHeight = window.innerHeight;
-      const totalViewports = Math.ceil(totalHeight / viewportHeight);
+      // Add extra viewport for overlap
+      const totalViewports =
+        Math.ceil(totalHeight / (viewportHeight * 0.9)) + 1;
       let currentViewport = 0;
 
+      // Start from the top
       await smoothScroll(0);
-      await delay(500);
+      await delay(800); // Give more time for initial scroll
 
       while (currentViewport < totalViewports) {
+        // Calculate current scroll position with overlap
+        const scrollPosition = Math.min(
+          currentViewport * (viewportHeight * 0.9),
+          totalHeight - viewportHeight
+        );
+
+        // Scroll to position
+        await smoothScroll(scrollPosition);
+        await delay(500); // Wait for scroll and content to settle
+
+        // Capture current viewport
         const viewportCanvas = await captureViewport();
 
+        // Calculate draw position
+        const drawPosition = currentViewport * (viewportHeight * 0.9) * 2;
+
+        // Draw to canvas
         ctx.drawImage(
           viewportCanvas,
           0,
-          currentViewport * viewportHeight * 2,
+          drawPosition,
           viewportCanvas.width,
           viewportCanvas.height
         );
 
         currentViewport++;
-        if (currentViewport < totalViewports) {
-          await smoothScroll(currentViewport * viewportHeight);
-          await delay(300);
-        }
       }
 
+      // Ensure we capture the very bottom
+      const finalScroll = totalHeight - viewportHeight;
+      await smoothScroll(finalScroll);
+      await delay(500);
+
+      const finalViewport = await captureViewport();
+      ctx.drawImage(
+        finalViewport,
+        0,
+        (totalHeight - viewportHeight) * 2,
+        finalViewport.width,
+        finalViewport.height
+      );
+
+      // Return to original position
       await smoothScroll(originalScrollPos);
       capturedCanvas = finalCanvas;
       showDownloadPopup();
